@@ -23,6 +23,7 @@ import (
 	"os"
 	"strings"
 
+	rspec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/sirupsen/logrus"
 	"sigs.k8s.io/yaml"
 
@@ -42,6 +43,7 @@ type config struct {
 type plugin struct {
 	stub stub.Stub
 	mask stub.EventMask
+	// mgr  *hooks.Manager
 }
 
 var (
@@ -123,6 +125,22 @@ func (p *plugin) CreateContainer(_ context.Context, pod *api.PodSandbox, contain
 		adjust.AddEnv(cfg.SetEnv, fmt.Sprintf("logger-pid-%d", os.Getpid()))
 	}
 
+	spec := &rspec.Spec{
+		Process: &rspec.Process{
+			Args: container.Args,
+		},
+
+		Hooks: &rspec.Hooks{
+			Poststart: []rspec.Hook{
+				{
+					Path: "/bin/bash",
+					Args: []string{"bash", "-c", "awk -F'[:,]' '{for(i=1;i<=NF;i++)if($i~/pid/)print $(i+1); exit}' >> /sys/fs/resctrl/mon_groups/test/tasks"},
+				},
+			},
+		},
+	}
+
+	adjust.AddHooks(api.FromOCIHooks(spec.Hooks))
 	return adjust, nil, nil
 }
 
@@ -238,11 +256,18 @@ func main() {
 		opts = append(opts, stub.WithPluginIdx(pluginIdx))
 	}
 
+	// mgr, err := hooks.New(context.Background(), []string{"/etc/containers/oci/hooks.d"}, []string{})
+	// if err != nil {
+	// 	log.Errorf("failed to set up hook manager: %v", err)
+	// 	os.Exit(1)
+	// }
+
 	p := &plugin{}
-	if p.mask, err = api.ParseEventMask(events); err != nil {
-		log.Fatalf("failed to parse events: %v", err)
-	}
-	cfg.Events = strings.Split(events, ",")
+	// p.mgr = mgr
+	// if p.mask, err = api.ParseEventMask(events); err != nil {
+	// 	log.Fatalf("failed to parse events: %v", err)
+	// }
+	// cfg.Events = strings.Split(events, ",")
 
 	if p.stub, err = stub.New(p, append(opts, stub.WithOnClose(p.onClose))...); err != nil {
 		log.Fatalf("failed to create plugin stub: %v", err)
